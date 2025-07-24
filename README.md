@@ -1,52 +1,130 @@
-# smart-door-lock
-his project is a smart door lock system based on the ESP32 microcontroller and the MFRC522 RFID reader. It allows access using RFID cards and includes a servo motor to control the door. The system unlocks automatically when someone is inside and uses RFID authentication from outside.
-# 🔐 Smart Door Lock System using ESP32, RFID (RC522), and Servo Motor
+#include <SPI.h>
+#include <MFRC522.h>
+#include <ESP32Servo.h>
 
-This project is a smart door lock system that uses an ESP32 microcontroller, an RC522 RFID reader, and a servo motor to control access.
+// ESP32 hardware SPI pins for MFRC522
+#define SS_PIN    2
+#define RST_PIN   22
+#define SCK_PIN   18
+#define MISO_PIN  19
+#define MOSI_PIN  23
 
-## 📦 Components Used
+// Ultrasonic sensor pins
+#define TRIG_PIN  5
+#define ECHO_PIN  4
 
-- ESP32
-- RC522 RFID Reader
-- Servo Motor
-- Ultrasonic Sensor (Optional)
-- Jumper Wires
-- Breadboard
-- Power Supply (e.g. 5V)
+// Servo motor pin
+#define SERVO_PIN 25
 
-## ⚙️ Features
+// Servo angles
+const int OPEN_ANGLE  = 90;
+const int CLOSE_ANGLE = 0;
 
-- RFID authentication
-- Unlocks door when authorized card is scanned
-- Servo motor to open/close lock
-- Optional: Ultrasonic sensor to detect presence
+// Authorized RFID UID (example: 0x35, 0x15, 0xA5, 0xAC)
+byte authorizedUID[4] = {0x35, 0x15, 0xA5, 0xAC};
 
-## 🛠️ Installation
+MFRC522 rfid(SS_PIN, RST_PIN);
+Servo doorServo;
 
-1. Connect all components as shown in the wiring diagram.
-2. Flash the Arduino code to ESP32 using the Arduino IDE.
-3. Add your RFID card UIDs in the code to authorize access.
+void setup() {
+  Serial.begin(115200);
+  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SS_PIN);
+  rfid.PCD_Init();
 
-## 📁 Files
+  doorServo.setPeriodHertz(50);
+  doorServo.attach(SERVO_PIN, 500, 2400);  // Standard servo pulse range
+  doorServo.write(CLOSE_ANGLE);            // Start with door closed
 
-- `smart_door_lock.ino` - main Arduino sketch
-- `wiring_diagram.png` - circuit diagram (if available)
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
 
-## 💡 Future Improvements
+  Serial.println("Smart Door Lock system ready!");
+}
 
-- Add buzzer or LCD screen
-- Store users in EEPROM or online database
-- Add mobile app or web interface
+void loop() {
+  // Serial.println("Loop start");
 
-## 📸 Preview
+  // Check RFID from outside FIRST
+  if (checkRFIDEntry()) {
+    openDoor();
+    delay(2000);
+    return; // Skip ultrasonic this loop if RFID triggered
+  }
 
-*(Insert image or GIF of the working system here)*
+   //Check ultrasonic from inside
+   if (checkInsideExit()) {
+     openDoor();
+    delay(2000);
+  }
+}
 
-## 👤 Author
+// Returns true if authorized RFID card is detected
+bool checkRFIDEntry() {
+ //  Serial.println("Checking RFID...");
+  if (!rfid.PICC_IsNewCardPresent()) {
+   // Serial.println("No new RFID card present.");
+    return false;
+  }
+  if (!rfid.PICC_ReadCardSerial()) {
+    // Serial.println("RFID card detected, but could not read serial.");
+    return false;
+  }
 
-- Name: Haitam Jarmi  
-- GitHub: [github.com/yourusername](https://github.com/yourusername)
+  Serial.print("🎫 Card UID: ");
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    Serial.print(rfid.uid.uidByte[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
 
----
+  if (isAuthorized(rfid.uid.uidByte)) {
+    Serial.println("✅ Access granted");
+    rfid.PICC_HaltA();
+    return true;
+  } else {
+    Serial.println("❌ Access denied");
+    rfid.PICC_HaltA();
+    return false;
+  }
+}
 
-*This is an educational project. Use responsibly.*
+// Returns true if someone detected inside
+bool checkInsideExit() {
+  long duration, distance;
+
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  duration = pulseIn(ECHO_PIN, HIGH, 30000); // Timeout 30ms for reliability
+  distance = duration * 0.034 / 2;
+
+  // Serial.print("Ultrasonic distance: ");
+  Serial.println(distance);
+
+  if (distance > 0 && distance < 20) { // 20cm threshold
+    Serial.println("🚶 Detected movement from inside");
+    return true;
+  }
+  return false;
+}
+
+// Check UID against authorized list
+bool isAuthorized(byte *uid) {
+  for (byte i = 0; i < 4; i++) {
+    if (uid[i] != authorizedUID[i])
+      return false;
+  }
+  return true;
+}
+
+// Servo door control
+void openDoor() {
+  Serial.println("🔓 Opening door");
+  doorServo.write(OPEN_ANGLE);
+  delay(3000); // Door remains open for 3 seconds
+  Serial.println("🔒 Closing door");
+  doorServo.write(CLOSE_ANGLE);
+}
